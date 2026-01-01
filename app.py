@@ -9,6 +9,14 @@ from shapely.geometry import shape
 import tempfile
 import os
 import re
+from PIL import Image
+import base64
+from io import BytesIO
+import matplotlib
+
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
 
 st.set_page_config(layout="wide", page_title="GIS Processor")
 st.title("🗺️ Interactive GIS Raster-Vector Processor")
@@ -69,6 +77,53 @@ def calculate_index(bands_dict, index_name):
     return None
 
 
+def create_index_overlay(index_array, bounds, crs, index_name):
+    """Create a colored overlay image for the index"""
+    try:
+        # Normalize index values to 0-1
+        valid_mask = ~np.isnan(index_array)
+        if not valid_mask.any():
+            return None
+
+        normalized = np.full_like(index_array, np.nan)
+        valid_data = index_array[valid_mask]
+
+        # Use percentile clipping for better visualization
+        vmin, vmax = np.percentile(valid_data, [2, 98])
+        normalized[valid_mask] = np.clip((index_array[valid_mask] - vmin) / (vmax - vmin + 1e-10), 0, 1)
+
+        # Define colormaps for different indices
+        colormaps = {
+            'NDVI': LinearSegmentedColormap.from_list('ndvi', ['brown', 'yellow', 'green', 'darkgreen']),
+            'NDWI': LinearSegmentedColormap.from_list('ndwi', ['brown', 'lightblue', 'blue', 'darkblue']),
+            'NDSI': LinearSegmentedColormap.from_list('ndsi', ['brown', 'lightgray', 'white', 'cyan']),
+            'Moisture': LinearSegmentedColormap.from_list('moisture', ['red', 'yellow', 'lightblue', 'blue']),
+            'EVI': LinearSegmentedColormap.from_list('evi', ['brown', 'yellow', 'green', 'darkgreen']),
+            'SAVI': LinearSegmentedColormap.from_list('savi', ['tan', 'yellow', 'lightgreen', 'green'])
+        }
+
+        cmap = colormaps.get(index_name, plt.cm.RdYlGn)
+
+        # Apply colormap
+        rgba = cmap(normalized)
+        rgba[~valid_mask] = [0, 0, 0, 0]  # Transparent for NaN
+        rgba[:, :, 3] = np.where(valid_mask, 0.6, 0)  # Set alpha
+
+        # Convert to image
+        img = Image.fromarray((rgba * 255).astype(np.uint8), mode='RGBA')
+
+        # Save to base64
+        buffered = BytesIO()
+        img.save(buffered, format="PNG")
+        img_str = base64.b64encode(buffered.getvalue()).decode()
+
+        return img_str, [[bounds.bottom, bounds.left], [bounds.top, bounds.right]]
+
+    except Exception as e:
+        st.error(f"Error creating overlay: {e}")
+        return None
+
+
 def zonal_stats(index_array, geometry, transform, shape_tuple):
     """Calculate zonal statistics for polygon"""
     try:
@@ -121,7 +176,7 @@ with st.sidebar:
         'EVI': ['Blue (B02)', 'Red (B04)', 'NIR (B08)'],
         'SAVI': ['Red (B04)', 'NIR (B08)']
     }
-    with st.expander("Required bands", expanded=True):
+    with st.expander("Required bands"):
         for band in required_bands.get(selected_index, []):
             st.text(f"• {band}")
 
@@ -169,9 +224,18 @@ with st.sidebar:
         elif selected_index == 'SAVI' and 'Red' in bands_info and 'NIR' in bands_info:
             can_calculate = True
 
+        if can_calculate:
+            st.success(f"✅ Ready to calculate {selected_index}")
+        else:
+            st.warning(f"⚠️ Missing bands for {selected_index}")
+
+        # Add overlay toggle
+        if can_calculate:
+            show_overlay = True
     else:
         st.info("No files uploaded yet")
         can_calculate = False
+        show_overlay = False
 
 # Main area
 if uploaded_files and can_calculate and selected_index:
@@ -218,7 +282,36 @@ if uploaded_files and can_calculate and selected_index:
                 popup=f'Raster extent ({reference_src["shape"][1]}x{reference_src["shape"][0]})'
             ).add_to(m)
 
-            # Add drawing tools
+            # Calculate and add index overlay if enabled
+            if show_overlay:
+                with st.spinner("Generating index overlay..."):
+                    index_array = calculate_index(bands_dict, selected_index)
+
+                    if index_array is not None:
+                        overlay_result = create_index_overlay(
+                            index_array,
+                            bounds,
+                            reference_src['crs'],
+                            selected_index
+                        )
+
+                        if overlay_result:
+                            img_str, img_bounds = overlay_result
+
+                            folium.raster_layers.ImageOverlay(
+                                image=f"data:image/png;base64,{img_str}",
+                                bounds=img_bounds,
+                                opacity=0.6,
+                                interactive=True,
+                                cross_origin=False,
+                                zindex=1,
+                                name=f"{selected_index} Overlay"
+                            ).add_to(m)
+
+                            # Add layer control
+                            folium.LayerControl().add_to(m)
+
+            # Add drawing tools with trash functionality
             draw = Draw(
                 export=True,
                 draw_options={
@@ -228,12 +321,31 @@ if uploaded_files and can_calculate and selected_index:
                     'marker': False,
                     'circlemarker': False,
                     'polygon': True
-                }
+                },
+                edit_options={'edit': False}
             )
             draw.add_to(m)
 
+            # Add custom JavaScript to enable "delete all" functionality
+            delete_all_js = """
+            <script>
+            function deleteAllShapes() {
+                var map = window.parent.foliumMap;
+                if (map && map.eachLayer) {
+                    map.eachLayer(function(layer) {
+                        if (layer instanceof L.Path && !(layer instanceof L.Rectangle)) {
+                            map.removeLayer(layer);
+                        }
+                    });
+                }
+            }
+            </script>
+            """
+            m.get_root().html.add_child(folium.Element(delete_all_js))
+
             # Display map
             map_output = st_folium(m, width=800, height=600, key="map")
+
 
             # Process drawn polygon
             if map_output and map_output.get('last_active_drawing'):
@@ -307,6 +419,8 @@ if uploaded_files and can_calculate and selected_index:
                     1. Click polygon/rectangle icon on map
                     2. Draw your area of interest
                     3. Statistics will appear here
+
+                    **Clear shapes:**
                     """)
 
         finally:
@@ -324,9 +438,11 @@ else:
 
     1. **Upload multiple raster files** (e.g., Sentinel-2 bands: B02, B03, B04, B08, B11, B12)
     2. **Select an index** from available options based on uploaded bands
-    3. **Draw a polygon** on the interactive map
-    4. **View zonal statistics** in the right panel
-    5. **Download results** as CSV
+    3. **Toggle overlay** to see colored index visualization (optional)
+    4. **Draw a polygon** on the interactive map
+    5. **View zonal statistics** in the right panel
+    6. **Download results** as CSV
+    7. **Clear shapes** using trash icon
 
     ### 🛰️ Sentinel-2 Band Naming:
     - B02 = Blue
@@ -343,13 +459,13 @@ else:
     - **Moisture**: Soil Moisture (NIR + SWIR1)
     - **EVI**: Enhanced Vegetation (Blue + Red + NIR)
     - **SAVI**: Soil Adjusted Vegetation (Red + NIR)
+
+    ### 🎨 Overlay Colors:
+    - **NDVI**: Brown → Yellow → Green → Dark Green
+    - **NDWI**: Brown → Light Blue → Blue → Dark Blue
+    - **NDSI**: Brown → Gray → White → Cyan
+    - **Moisture**: Red → Yellow → Light Blue → Blue
     """)
 
 st.divider()
 st.caption("🛰️ Multi-band GIS Processor | Streamlit + Rasterio + Folium")
-
-### Next to update
-# creating readme with instructions
-# Displaying the .tif over the map , by default rgb if available, or chosen index if possible
-# Changing 'trash' option on the map
-# Adding support to select fields from uldk instead of drawing geometry
