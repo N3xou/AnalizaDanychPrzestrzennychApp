@@ -242,7 +242,7 @@ if uploaded_files and can_calculate and selected_index:
     col1, col2 = st.columns([2, 1])
 
     with col1:
-        st.subheader("🗺️ Interactive Map - Draw Polygon")
+        st.subheader("🗺️ Interactive Map")
 
         # Save files temporarily and read bands
         temp_files = {}
@@ -436,7 +436,7 @@ else:
     st.markdown("""
     ### 📖 Instructions:
 
-    1. **Upload multiple raster files** (e.g., Sentinel-2 bands: B02, B03, B04, B08, B11, B12)
+    1. **Upload multiple raster files** (Filenames must contain band e.g. B01, B02, B11)
     2. **Select an index** from available options based on uploaded bands
     3. **Toggle overlay** to see colored index visualization (optional)
     4. **Draw a polygon** on the interactive map
