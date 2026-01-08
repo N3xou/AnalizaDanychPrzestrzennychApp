@@ -149,6 +149,8 @@ def zonal_stats(index_array, geometry, transform, shape_tuple):
         st.error(f"Error calculating stats: {e}")
     return None
 
+if 'clear_counter' not in st.session_state:
+    st.session_state.clear_counter = 0
 
 # Sidebar
 with st.sidebar:
@@ -326,6 +328,7 @@ if uploaded_files and can_calculate and selected_index:
             )
             draw.add_to(m)
 
+
             # Add custom JavaScript to enable "delete all" functionality
             delete_all_js = """
             <script>
@@ -344,7 +347,15 @@ if uploaded_files and can_calculate and selected_index:
             m.get_root().html.add_child(folium.Element(delete_all_js))
 
             # Display map
-            map_output = st_folium(m, width=800, height=600, key="map")
+            map_output = st_folium(
+                m,
+                width=800,
+                height=600,
+                key=f"map_{st.session_state.clear_counter}"
+            )
+            if st.button("🗑️ Reload (clear shapes)", key="clear_btn"):
+                st.session_state.clear_counter += 1  # Zmienia klucz mapy
+                st.rerun()  # Przeładowanie
 
 
             # Process drawn polygon
