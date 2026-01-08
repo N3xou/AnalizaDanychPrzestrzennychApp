@@ -22,6 +22,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app.py .
 
+# Create directory for data
+RUN mkdir -p /app/data
+
 # Expose Streamlit port
 EXPOSE 8501
 
