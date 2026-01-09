@@ -1,8 +1,20 @@
 # 🗺️ Raster Index Zonal Statistics Tool
 
 An interactive tool for computing spectral indices from **Sentinel-2 raster bands**, visualizing them on a map, and extracting **zonal statistics** from user-drawn polygons.
-
----
+## Quick start & test
+1. Clone the repository
+```bash
+git clone <https://github.com/N3xou/AnalizaDanychPrzestrzennychApp.git>
+```
+2. To start the app
+```bash
+streamlit run app.py
+```
+3. Alternatively run via docker [http://localhost:8501](http://localhost:8501)
+```bash
+docker-compose up -d --build
+```
+4. Upload rasters from ExampleRaster or ExampleRasterBig directories
 
 ## 📖 Instructions
 
